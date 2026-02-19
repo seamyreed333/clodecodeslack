@@ -2,16 +2,20 @@
 """Slack 스레드 요약을 Confluence 위키 페이지로 생성하는 스크립트.
 
 사용법:
+    # 스페이스 목록 조회
+    python create_wiki_summary.py --list-spaces
+
+    # 위키 페이지 생성
     python create_wiki_summary.py \\
-        --space-url "https://cloud.wiki.woowa.in/wiki/spaces/~%EC%9C%A4%ED%9A%A8%EC%A0%95/" \\
+        --space-key "~윤효정" \\
         --title "Slack 스레드 요약 - 2026-02-19" \\
         --thread-url "https://woowahan.slack.com/archives/..." \\
         --messages messages.json
 
 환경변수:
-    CONFLUENCE_BASE_URL: Confluence 서버 URL
-    CONFLUENCE_USERNAME: 사용자 이메일
-    CONFLUENCE_API_TOKEN: API 토큰
+    ATLASSIAN_BASE_URL: Confluence 서버 URL
+    ATLASSIAN_USER_EMAIL: 사용자 이메일
+    ATLASSIAN_API_TOKEN: API 토큰
 """
 
 import argparse
@@ -42,18 +46,18 @@ def build_wiki_body(thread_url, messages, summary=None):
 
     # 요약 섹션
     if summary:
-        html_parts.append(f"<h2>요약</h2>")
+        html_parts.append("<h2>요약</h2>")
         html_parts.append(f"<p>{_escape_html(summary)}</p>")
 
     # Slack 스레드 링크
-    html_parts.append(f"<h2>원본 Slack 스레드</h2>")
+    html_parts.append("<h2>원본 Slack 스레드</h2>")
     html_parts.append(
         f'<p><a href="{_escape_html(thread_url)}">'
         f"Slack 스레드 바로가기</a></p>"
     )
 
     # 메시지 목록
-    html_parts.append(f"<h2>스레드 내용</h2>")
+    html_parts.append("<h2>스레드 내용</h2>")
     html_parts.append("<table><tbody>")
     html_parts.append(
         "<tr><th>작성자</th><th>내용</th></tr>"
@@ -65,7 +69,7 @@ def build_wiki_body(thread_url, messages, summary=None):
     html_parts.append("</tbody></table>")
 
     # 메타 정보
-    html_parts.append(f"<h2>메타 정보</h2>")
+    html_parts.append("<h2>메타 정보</h2>")
     html_parts.append("<ul>")
     html_parts.append(
         f"<li>위키 생성일: {datetime.now().strftime('%Y-%m-%d %H:%M')}</li>"
@@ -87,12 +91,12 @@ def _escape_html(text):
 
 
 def create_wiki_page_from_thread(
-    space_url, title, thread_url, messages, summary=None
+    space_key, title, thread_url, messages, summary=None
 ):
     """Slack 스레드 내용으로 Confluence 위키 페이지를 생성한다.
 
     Args:
-        space_url: Confluence 스페이스 URL
+        space_key: Confluence 스페이스 키 (예: '~윤효정')
         title: 위키 페이지 제목
         thread_url: Slack 스레드 URL
         messages: 메시지 목록
@@ -102,8 +106,6 @@ def create_wiki_page_from_thread(
         생성된 페이지 정보 dict
     """
     client = ConfluenceClient()
-    space_key = ConfluenceClient.parse_space_key_from_url(space_url)
-
     body_html = build_wiki_body(thread_url, messages, summary=summary)
 
     # 동일 제목의 페이지가 있으면 업데이트, 없으면 생성
@@ -125,28 +127,41 @@ def create_wiki_page_from_thread(
     return result
 
 
+def list_spaces():
+    """사용 가능한 스페이스 목록을 출력한다."""
+    client = ConfluenceClient()
+    spaces = client.list_spaces()
+    print(f"사용 가능한 스페이스 ({len(spaces)}개):\n")
+    print(f"{'키':<30} {'이름':<40} {'타입':<10}")
+    print("-" * 80)
+    for s in spaces:
+        print(f"{s['key']:<30} {s['name']:<40} {s['type']:<10}")
+    return spaces
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Slack 스레드 요약을 Confluence 위키 페이지로 생성"
     )
     parser.add_argument(
-        "--space-url",
-        required=True,
-        help="Confluence 스페이스 URL",
+        "--list-spaces",
+        action="store_true",
+        help="사용 가능한 스페이스 목록 출력",
+    )
+    parser.add_argument(
+        "--space-key",
+        help="Confluence 스페이스 키 (예: '~윤효정')",
     )
     parser.add_argument(
         "--title",
-        required=True,
         help="위키 페이지 제목",
     )
     parser.add_argument(
         "--thread-url",
-        required=True,
         help="Slack 스레드 URL",
     )
     parser.add_argument(
         "--messages",
-        required=True,
         help="메시지 JSON 파일 경로 또는 JSON 문자열",
     )
     parser.add_argument(
@@ -162,6 +177,18 @@ def main():
 
     args = parser.parse_args()
 
+    # 스페이스 목록 조회
+    if args.list_spaces:
+        list_spaces()
+        return
+
+    # 위키 생성 시 필수 인자 검증
+    if not all([args.space_key, args.title, args.thread_url, args.messages]):
+        parser.error(
+            "위키 페이지 생성에는 --space-key, --title, --thread-url, --messages 가 필요합니다.\n"
+            "스페이스 목록을 보려면 --list-spaces 옵션을 사용하세요."
+        )
+
     # 메시지 파싱
     try:
         with open(args.messages, encoding="utf-8") as f:
@@ -170,24 +197,22 @@ def main():
         messages = json.loads(args.messages)
 
     if args.dry_run:
-        space_key = ConfluenceClient.parse_space_key_from_url(args.space_url)
         body_html = build_wiki_body(args.thread_url, messages, summary=args.summary)
         print("=" * 60)
-        print(f"[DRY RUN] 위키 페이지 미리보기")
-        print(f"  스페이스: {space_key}")
+        print("[DRY RUN] 위키 페이지 미리보기")
+        print(f"  스페이스: {args.space_key}")
         print(f"  제목: {args.title}")
         print(f"  메시지 수: {len(messages)}건")
         print("=" * 60)
         print(body_html)
         print("=" * 60)
         print(
-            "\n실제 생성하려면 --dry-run 옵션을 제거하고 "
-            ".env 파일에 인증 정보를 설정하세요."
+            "\n실제 생성하려면 --dry-run 옵션을 제거하세요."
         )
         return
 
     result = create_wiki_page_from_thread(
-        space_url=args.space_url,
+        space_key=args.space_key,
         title=args.title,
         thread_url=args.thread_url,
         messages=messages,

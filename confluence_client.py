@@ -4,7 +4,6 @@ Confluence REST API를 사용하여 위키 페이지를 생성/조회/업데이�
 """
 
 import os
-import json
 from urllib.parse import unquote
 
 import requests
@@ -14,11 +13,13 @@ from requests.auth import HTTPBasicAuth
 class ConfluenceClient:
     """Confluence REST API 클라이언트."""
 
-    def __init__(self, base_url=None, username=None, api_token=None):
-        self.base_url = (base_url or os.environ.get("CONFLUENCE_BASE_URL", "")).rstrip("/")
-        self.username = username or os.environ.get("CONFLUENCE_USERNAME", "")
-        self.api_token = api_token or os.environ.get("CONFLUENCE_API_TOKEN", "")
-        self.auth = HTTPBasicAuth(self.username, self.api_token)
+    def __init__(self, base_url=None, user_email=None, api_token=None):
+        self.base_url = (
+            base_url or os.environ.get("ATLASSIAN_BASE_URL", "")
+        ).rstrip("/")
+        self.user_email = user_email or os.environ.get("ATLASSIAN_USER_EMAIL", "")
+        self.api_token = api_token or os.environ.get("ATLASSIAN_API_TOKEN", "")
+        self.auth = HTTPBasicAuth(self.user_email, self.api_token)
         self.session = requests.Session()
         self.session.auth = self.auth
         self.session.headers.update({
@@ -28,6 +29,27 @@ class ConfluenceClient:
 
     def _api_url(self, path):
         return f"{self.base_url}/wiki/rest/api{path}"
+
+    def list_spaces(self, limit=100):
+        """사용 가능한 스페이스 목록을 조회한다.
+
+        Returns:
+            스페이스 목록 [{"key": "...", "name": "...", "type": "..."}, ...]
+        """
+        resp = self.session.get(
+            self._api_url("/space"),
+            params={"limit": limit, "expand": "description.plain"},
+        )
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
+        return [
+            {
+                "key": s["key"],
+                "name": s["name"],
+                "type": s["type"],
+            }
+            for s in results
+        ]
 
     def get_space(self, space_key):
         """스페이스 정보를 조회한다."""
@@ -117,7 +139,6 @@ class ConfluenceClient:
         예: 'https://cloud.wiki.woowa.in/wiki/spaces/~%EC%9C%A4%ED%9A%A8%EC%A0%95/'
             -> '~윤효정'
         """
-        # URL에서 /spaces/ 이후의 경로를 추출
         parts = space_url.rstrip("/").split("/spaces/")
         if len(parts) < 2:
             raise ValueError(f"Invalid space URL: {space_url}")
